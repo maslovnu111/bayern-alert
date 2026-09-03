@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
 
-# Налаштування часового поясу (за замовчуванням Київ: Europe/Kyiv, або Berlin: Europe/Berlin)
-TIMEZONE = "Europe/Kyiv"
+# Встановлено часовий пояс Варшави
+TIMEZONE = ZoneInfo("Europe/Warsaw")
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -32,8 +32,7 @@ def assess_importance(competition: str, stage: str, opponent: str) -> str:
 
 
 def check_bayern_match():
-    local_tz = ZoneInfo(TIMEZONE)
-    today = datetime.now(local_tz).date()
+    today_local = datetime.now(TIMEZONE).date()
 
     url = f"https://api.football-data.org/v4/teams/{BAYERN_ID}/matches?status=SCHEDULED"
     headers = {"X-Auth-Token": API_KEY}
@@ -47,15 +46,14 @@ def check_bayern_match():
     matches = data.get("matches", [])
 
     for match in matches:
-        # Час початку матчу за UTC
         utc_time_str = match["utcDate"].replace("Z", "+00:00")
         start_utc = datetime.fromisoformat(utc_time_str)
 
-        # Переводимо у ваш місцевий час
-        start_local = start_utc.astimezone(local_tz)
+        # Конвертуємо час у місцевий (Варшава)
+        start_local = start_utc.astimezone(TIMEZONE)
 
-        if start_local.date() == today:
-            # Орієнтовна тривалість гри ~1 год 55 хв (два тайми по 45 хв + перерва 15 хв + доданий час)
+        if start_local.date() == today_local:
+            # Орієнтовна тривалість гри ~1 год 55 хв
             end_local = start_local + timedelta(hours=1, minutes=55)
 
             home_team = match["homeTeam"]["name"]
@@ -77,14 +75,14 @@ def check_bayern_match():
                 f"📢 <b>Рівень небезпеки для вух:</b>\n{importance}"
             )
 
-            # Відправка у Telegram
+            # Відправка в Telegram
             tg_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
             requests.post(tg_url, data=payload)
             print("Сповіщення успішно надіслано!")
             return
 
-    print("Сьогодні матчів Баварії немає. Спокій гарантовано.")
+    print("Сьогодні матчів Баварії немає.")
 
 
 if __name__ == "__main__":
