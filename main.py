@@ -3,32 +3,76 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
 
-# Встановлено часовий пояс Варшави
+# Часовий пояс Варшави
 TIMEZONE = ZoneInfo("Europe/Warsaw")
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
 
-# ID Баварії в базі football-data.org — 5
+# ID Баварії в базі даних football-data.org — 5
 BAYERN_ID = 5
 
 
-def assess_importance(competition: str, stage: str, opponent: str) -> str:
-    """Визначає потенційний рівень гучності сусіда."""
-    top_opponents = ["Borussia Dortmund", "Bayer 04 Leverkusen", "RB Leipzig"]
+def assess_importance(competition: str, stage: str, opponent: str) -> tuple[str, str]:
+    """Визначає рівень небезпеки шуму та генерує розгорнутий коментар із причиною."""
+    comp_lower = competition.lower()
+    opp_lower = opponent.lower()
 
-    if "Champions League" in competition:
+    # 1. Ліга Чемпіонів
+    if "champions league" in comp_lower:
         if stage in ["QUARTER_FINALS", "SEMI_FINALS", "FINAL"]:
-            return "🚨 ЕКСТРЕМАЛЬНА (Плей-оф Ліги Чемпіонів! Сусід кричатиме без зупину)"
-        return "🔥 ВИСОКА (Ліга Чемпіонів — приготуйте беруші)"
+            return (
+                "🚨 ЕКСТРЕМАЛЬНА",
+                "Вирішальна стадія плей-оф Ліги Чемпіонів. Будь-яка помилка веде до вильоту з головного турніру Європи. Емоції та крики будуть на максимумі від першої до останньої хвилини.",
+            )
+        if stage in ["LAST_16", "ROUND_OF_16", "PLAYOFFS"]:
+            return (
+                "🔥 ВИСОКА",
+                "Матч плей-оф Ліги Чемпіонів на виліт. Ціна кожного забитого або пропущеного м'яча величезна, напруга в кімнаті сусіда гарантована.",
+            )
+        return (
+            "🔥 ВИСОКА",
+            "Матч Ліги Чемпіонів. Найпрестижніший європейський турнір — такі ігри вболівальники Баварії ніколи не дивляться спокійно.",
+        )
 
-    if "Bundesliga" in competition:
-        if any(team.lower() in opponent.lower() for team in top_opponents):
-            return "⚡ ДУЖЕ ВИСОКА (Принципове дербі / Топ-матч)"
-        return "🟡 СЕРЕДНЯ (Звичайний тур чемпіонату Німеччини)"
+    # 2. Бундесліга (Чемпіонат Німеччини)
+    if "bundesliga" in comp_lower:
+        # Головне дербі Німеччини
+        if "dortmund" in opp_lower:
+            return (
+                "⚡ ДУЖЕ ВИСОКА",
+                "Принципове дербі («Der Klassiker») проти Дортмунда. Це історично найзапекліший суперник Баварії — крики лунатимуть на кожен спірний свисток судді.",
+            )
+        # Битва з прямими конкурентами за чемпіонство
+        if any(team in opp_lower for team in ["leverkusen", "leipzig"]):
+            return (
+                "⚡ ДУЖЕ ВИСОКА",
+                f"Матч проти прямого конкурента за золото ({opponent}). Поразка може коштувати першого місця в таблиці, тому реакція на гру буде бурхливою.",
+            )
+        # Рядовий матч ліги
+        return (
+            "🟡 СЕРЕДНЯ",
+            "Звичайний тур чемпіонату проти суперника з середини таблиці. Якщо гра піде за планом, сусід кричатиме хіба що під час забитих голів.",
+        )
 
-    return "🟢 ПОМІРНА"
+    # 3. Кубок Німеччини (DFB-Pokal)
+    if "pokal" in comp_lower:
+        if stage in ["SEMI_FINALS", "FINAL"]:
+            return (
+                "🔥 ВИСОКА",
+                "Вирішальний матч за національний кубок. Гра ведеться на виліт — у разі нічиєї можливі нервові додаткові тайми та серія пенальті.",
+            )
+        return (
+            "🟡 СЕРЕДНЯ",
+            "Матч Кубка Німеччини на виліт. Баварія часто є фаворитом, але сенсації в кубку трапляються регулярно, тож напруга все ж можлива.",
+        )
+
+    # 4. Товариські ігри та інші турніри
+    return (
+        "🟢 ПОМІРНА",
+        "Рядовий або товариський матч без великого турнірного значення. Швидше за все, сусід дивитиметься гру спокійно або фоном.",
+    )
 
 
 def check_bayern_match():
@@ -53,7 +97,7 @@ def check_bayern_match():
         start_local = start_utc.astimezone(TIMEZONE)
 
         if start_local.date() == today_local:
-            # Орієнтовна тривалість гри ~1 год 55 хв
+            # Орієнтовна тривалість ~1 год 55 хв
             end_local = start_local + timedelta(hours=1, minutes=55)
 
             home_team = match["homeTeam"]["name"]
@@ -63,7 +107,9 @@ def check_bayern_match():
 
             competition = match.get("competition", {}).get("name", "Невідомий турнір")
             stage = match.get("stage", "")
-            importance = assess_importance(competition, stage, opponent)
+
+            # Отримуємо рівень небезпеки та коментар
+            level, comment = assess_importance(competition, stage, opponent)
 
             message = (
                 f"⚠️ <b>УВАГА: СЬОГОДНІ ГРАЄ БАВАРІЯ!</b>\n\n"
@@ -72,10 +118,11 @@ def check_bayern_match():
                 f"🏟 <b>Локація:</b> {is_home}\n\n"
                 f"⏰ <b>Початок гри:</b> {start_local.strftime('%H:%M')}\n"
                 f"⏳ <b>Орієнтовне закінчення:</b> {end_local.strftime('%H:%M')}\n\n"
-                f"📢 <b>Рівень небезпеки для вух:</b>\n{importance}"
+                f"📢 <b>Рівень небезпеки для вух:</b>\n"
+                f"<b>{level}</b>\n"
+                f"ℹ️ <i>{comment}</i>"
             )
 
-            # Відправка в Telegram
             tg_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
             requests.post(tg_url, data=payload)
