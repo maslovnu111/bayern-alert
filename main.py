@@ -24,86 +24,85 @@ def assess_importance(competition: str, stage: str, opponent: str) -> tuple[str,
 
     if "champions league" in comp_lower:
         if stage in ["QUARTER_FINALS", "SEMI_FINALS", "FINAL"]:
-            return ("🚨 ЕКСТРЕМАЛЬНА", "Вирішальна стадія Ліги Чемпіонів. Емоції та крики на максимумі.")
+            return ("🚨 ЕКСТРЕМАЛЬНА", "Вирішальна стадія Ліги Чемпіонів. Емоції та крики сусіда гарантовані весь матч.")
         return ("🔥 ВИСОКА", "Матч Ліги Чемпіонів. Один із найважливіших турнірів сезону.")
 
     if "bundesliga" in comp_lower:
         if "dortmund" in opp_lower:
-            return ("⚡ ДУЖЕ ВИСОКА", "Принципове дербі («Der Klassiker») проти Дортмунда. Максимальна напруга.")
+            return ("⚡ ДУЖЕ ВИСОКА", "Принципове дербі («Der Klassiker») проти Дортмунда. Найвища напруга.")
         if any(team in opp_lower for team in ["leverkusen", "leipzig"]):
-            return ("⚡ ДУЖЕ ВИСОКА", f"Матч проти прямого конкурента ({opponent}) за золото.")
+            return ("⚡ ДУЖЕ ВИСОКА", f"Матч проти прямого конкурента ({opponent}) за перше місце в чемпіонаті.")
         return ("🟡 СЕРЕДНЯ", "Звичайний тур чемпіонату. Крики лунатимуть переважно під час забитих голів.")
 
-    return ("🟢 ПОМІРНА", "Матч без критичного турнірного тиску.")
+    return ("🟢 ПОМІРНА", "Кубковий, товариський або рядовий матч без критичного турнірного тиску.")
 
 
 def check_bayern_match():
     today_local = datetime.now(TIMEZONE).date()
 
-    # Запитуємо всі найближчі матчі команди
+    # Запитуємо матчі без жорсткого фільтра за статусом
     url = f"https://api.football-data.org/v4/teams/{BAYERN_ID}/matches"
     headers = {"X-Auth-Token": API_KEY}
 
     try:
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            send_tg_message(f"⚠️ Помилка Football API: {response.status_code}")
+            print(f"Помилка API: {response.status_code}")
+            send_tg_message(f"⚠️ Помилка отримання даних матчу (Код {response.status_code}).")
             return
 
-        matches = response.json().get("matches", [])
-        valid_statuses = ["SCHEDULED", "TIMED", "IN_PLAY", "PAUSED"]
-        
-        # Відбираємо майбутні/актуальні матчі
-        upcoming = [m for m in matches if m.get("status") in valid_statuses]
+        data = response.json()
+        matches = data.get("matches", [])
 
-        match_today = None
-        for match in upcoming:
-            utc_str = match["utcDate"].replace("Z", "+00:00")
-            start_local = datetime.fromisoformat(utc_str).astimezone(TIMEZONE)
+        # --- ДІАГНОСТИКА: друк отриманих матчів у логи GitHub ---
+        print(f"=== Отримано від сервера матчів: {len(matches)} ===")
+        for m in matches[:5]:
+            print(f"-> {m.get('utcDate')} | {m.get('homeTeam', {}).get('name')} vs {m.get('awayTeam', {}).get('name')} | Статус: {m.get('status')}")
+        print("====================================================")
+
+        valid_statuses = ["SCHEDULED", "TIMED", "IN_PLAY", "PAUSED"]
+
+        for match in matches:
+            if match.get("status") not in valid_statuses:
+                continue
+
+            utc_time_str = match["utcDate"].replace("Z", "+00:00")
+            start_utc = datetime.fromisoformat(utc_time_str)
+            start_local = start_utc.astimezone(TIMEZONE)
 
             if start_local.date() == today_local:
-                match_today = (match, start_local)
-                break
+                end_local = start_local + timedelta(hours=1, minutes=55)
 
-        if match_today:
-            match, start_local = match_today
-            end_local = start_local + timedelta(hours=1, minutes=55)
+                home_team = match["homeTeam"]["name"]
+                away_team = match["awayTeam"]["name"]
+                opponent = away_team if match["homeTeam"]["id"] == BAYERN_ID else home_team
+                is_home = "Вдома (Allianz Arena)" if match["homeTeam"]["id"] == BAYERN_ID else "На виїзді"
 
-            home = match["homeTeam"]["name"]
-            away = match["awayTeam"]["name"]
-            opponent = away if match["homeTeam"]["id"] == BAYERN_ID else home
-            is_home = "Вдома (Allianz Arena)" if match["homeTeam"]["id"] == BAYERN_ID else "На виїзді"
-            competition = match.get("competition", {}).get("name", "Турнір")
-            stage = match.get("stage", "")
+                competition = match.get("competition", {}).get("name", "Невідомий турнір")
+                stage = match.get("stage", "")
 
-            level, comment = assess_importance(competition, stage, opponent)
+                level, comment = assess_importance(competition, stage, opponent)
 
-            msg = (
-                f"⚠️ <b>УВАГА: СЬОГОДНІ ГРАЄ БАВАРІЯ!</b>\n\n"
-                f"⚽ <b>Суперник:</b> {opponent}\n"
-                f"🏆 <b>Турнір:</b> {competition}\n"
-                f"🏟 <b>Локація:</b> {is_home}\n\n"
-                f"⏰ <b>Початок гри:</b> {start_local.strftime('%H:%M')}\n"
-                f"⏳ <b>Орієнтовне закінчення:</b> {end_local.strftime('%H:%M')}\n\n"
-                f"📢 <b>Рівень небезпеки для вух:</b>\n<b>{level}</b>\nℹ️ <i>{comment}</i>"
-            )
-            send_tg_message(msg)
-            print("Сповіщення про сьогоднішній матч надіслано!")
-        else:
-            print("Сьогодні матчів Баварії немає.")
-            
-            # Якщо запуск виконувався вручну через кнопку Run Workflow — надіслати тестовий звіт
-            if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-                diag = ["ℹ️ <b>Тест бота успішний! Сьогодні гри немає.</b>\n\n📅 <b>Найближчі матчі Баварії:</b>"]
-                for m in upcoming[:3]:
-                    m_utc = m["utcDate"].replace("Z", "+00:00")
-                    m_time = datetime.fromisoformat(m_utc).astimezone(TIMEZONE)
-                    opp = m["awayTeam"]["name"] if m["homeTeam"]["id"] == BAYERN_ID else m["homeTeam"]["name"]
-                    diag.append(f"• {m_time.strftime('%d.%m %H:%M')} проти <b>{opp}</b> ({m.get('competition', {}).get('name')})")
-                send_tg_message("\n".join(diag))
+                message = (
+                    f"⚠️ <b>УВАГА: СЬОГОДНІ ГРАЄ БАВАРІЯ!</b>\n\n"
+                    f"⚽ <b>Суперник:</b> {opponent}\n"
+                    f"🏆 <b>Турнір:</b> {competition}\n"
+                    f"🏟 <b>Локація:</b> {is_home}\n\n"
+                    f"⏰ <b>Початок гри:</b> {start_local.strftime('%H:%M')}\n"
+                    f"⏳ <b>Орієнтовне закінчення:</b> {end_local.strftime('%H:%M')}\n\n"
+                    f"📢 <b>Рівень небезпеки для вух:</b>\n"
+                    f"<b>{level}</b>\n"
+                    f"ℹ️ <i>{comment}</i>"
+                )
+
+                send_tg_message(message)
+                print("Сповіщення успішно надіслано в Telegram!")
+                return
+
+        print("Сьогодні матчів Баварії немає.")
 
     except Exception as e:
-        print(f"Помилка: {e}")
+        print(f"Виникла помилка: {e}")
 
 
 if __name__ == "__main__":
